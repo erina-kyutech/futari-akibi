@@ -85,8 +85,9 @@
     return {
       id: id, token: token, alive: true, loaded: false,
       me: { name: loadStore().cals[id] ? loadStore().cals[id].myName : '' }, partner: null, invite: null,
-      rev: null, mine: {}, theirs: {},          // サーバー上の最新状態（key -> true）
-      desired: {}, inflight: {},                 // 未送信 / 送信中の自分の変更（key -> true|false）
+      rev: null, mine: {}, theirs: {},          // サーバー上の最新状態（key -> code）
+      presets: { weekday: ['U9', 'U18', 'S21'], night: ['U21', 'U23'] },
+      desired: {}, inflight: {},                 // 未送信 / 送信中の自分の変更（key -> code。''は解除）
       sending: false, failing: false, failCount: 0, epoch: 0, savedAt: 0,
       online: true, needFull: false, polling: false,
       month: monthOf(JP.today()), dragging: false,
@@ -97,28 +98,50 @@
   function keyOf(date, period) { return date + '|' + period; }
   function size(o) { return Object.keys(o).length; }
 
-  function isMine(k) {
+  /* 空きの状態は code で表す: ''=未選択 / 'F'=終日 / 'U18'=18時まで / 'S21'=21時から */
+  function myCode(k) {
     if (k in C.desired) return C.desired[k];
     if (k in C.inflight) return C.inflight[k];
-    return !!C.mine[k];
+    return C.mine[k] || '';
   }
+  function isMine(k) { return !!myCode(k); }
   function unsavedState(k) {
     if (!(k in C.desired) && !(k in C.inflight)) return '';
     return C.failing ? 'failed' : 'pending';
   }
-  function stateOf(k) {
-    var a = isMine(k), b = !!C.theirs[k];
-    return a && b ? 'both' : a ? 'mine' : b ? 'theirs' : 'none';
+  // 1項目の表示状態。st: none / mine / theirs / both(時間が重なる) / cross(両方空きだが時間がすれ違う)
+  // text: セルに載せる短い範囲表記、long: 読み上げ・一覧用
+  function slotInfo(k) {
+    var a = myCode(k), b = C.theirs[k] || '';
+    if (a && b) {
+      var ov = JP.overlap(a, b);
+      return ov ? { st: 'both', text: JP.rangeShort(ov), long: JP.rangeLong(ov) } : { st: 'cross', text: '', long: '' };
+    }
+    var c = a || b, r = c ? JP.codeRange(c) : null;
+    return { st: a ? 'mine' : b ? 'theirs' : 'none', text: r ? JP.rangeShort(r) : '', long: r ? JP.rangeLong(r) : '' };
+  }
+  function stateOf(k) { return slotInfo(k).st; }
+
+  /* タップで切り替える順番: 未選択 → 終日 → 自分のパターン… → 未選択（昼は 未選択 ⇄ 終日 のみ） */
+  function cycleList(period) {
+    var l = ['', 'F'];
+    if (period === 'all') l = l.concat(C.presets.weekday);
+    else if (period === 'night') l = l.concat(C.presets.night);
+    return l;
+  }
+  function nextCode(period, cur) {
+    var l = cycleList(period), i = l.indexOf(cur);
+    return i < 0 ? '' : l[(i + 1) % l.length];
   }
 
   /* 変更の送信: 常に1リクエストずつ。最後の指定が勝ち、変更した項目だけ送る */
-  function setMine(keys, on) {
-    for (var i = 0; i < keys.length; i++) {
-      var k = keys[i];
+  function setCodes(map) {
+    Object.keys(map).forEach(function (k) {
+      var code = map[k];
       // 送信待ち・送信中でなく、すでに同じ状態なら何もしない
-      if (!(k in C.desired) && !(k in C.inflight) && !!C.mine[k] === on) continue;
-      C.desired[k] = on;
-    }
+      if (!(k in C.desired) && !(k in C.inflight) && (C.mine[k] || '') === code) return;
+      C.desired[k] = code;
+    });
     if (size(C.desired)) scheduleFlush(150);
     paint();
   }
@@ -133,13 +156,13 @@
     var batch = C.desired;
     C.desired = {}; C.inflight = batch; C.sending = true;
     var changes = Object.keys(batch).map(function (k) {
-      var p = k.split('|'); return { date: p[0], period: p[1], on: batch[k] };
+      var p = k.split('|'); return { date: p[0], period: p[1], code: batch[k] };
     });
     paint();
     api('set', { id: s.id, changes: changes }, s.token, true).then(function () {
       if (C !== s) return;
       s.sending = false;
-      Object.keys(batch).forEach(function (k) { if (batch[k]) s.mine[k] = true; else delete s.mine[k]; });
+      Object.keys(batch).forEach(function (k) { if (batch[k]) s.mine[k] = batch[k]; else delete s.mine[k]; });
       s.inflight = {}; s.epoch++; s.failing = false; s.failCount = 0; s.savedAt = Date.now();
       setOnline(true);
       if (size(s.desired)) scheduleFlush(0);
@@ -202,7 +225,8 @@
       s.needFull = false;
       var prevPartner = s.partner;
       s.rev = r.rev; s.me = r.me; s.partner = r.partner; s.invite = r.invite;
-      s.mine = toSet(r.mine); s.theirs = toSet(r.theirs);
+      s.mine = toCodes(r.mine, r.mineW); s.theirs = toCodes(r.theirs, r.theirsW);
+      if (r.presets) s.presets = r.presets;
       if (!s.loaded) { s.loaded = true; }
       else if (!prevPartner && r.partner) toast(r.partner.name + 'さんが参加しました');
       var st = loadStore();
@@ -219,7 +243,12 @@
     });
     function next() { pollSoon(document.hidden ? POLL_HIDDEN_MS : POLL_MS); }
   }
-  function toSet(arr) { var o = {}; (arr || []).forEach(function (k) { o[k] = true; }); return o; }
+  // サーバーの mine/theirs（項目の一覧）と mineW/theirsW（終日以外の範囲）を key -> code にまとめる
+  function toCodes(arr, win) {
+    var o = {}; win = win || {};
+    (arr || []).forEach(function (k) { o[k] = win[k] || 'F'; });
+    return o;
+  }
 
   function stopSession() {
     if (!C) return;
@@ -265,11 +294,11 @@
       var cls = (date === today ? ' today' : '');
       var head = '<span class="num">' + d + '</span>' + (hol ? '<span class="hol" title="' + esc(hol) + '">祝</span>' : '');
       if (JP.dayType(date) === 'weekday') {
-        cells += '<button type="button" class="cell day' + cls + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="all"' + (past ? ' disabled' : '') + '>' + head + '<span class="mk"></span></button>';
+        cells += '<button type="button" class="cell day' + cls + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="all"' + (past ? ' disabled' : '') + '>' + head + '<span class="mk"></span><span class="wl"></span></button>';
       } else {
         cells += '<div class="cell off' + cls + '" data-off="' + date + '"><div class="head">' + head + '</div>' +
           ['noon', 'night'].map(function (p) {
-            return '<button type="button" class="pill' + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="' + p + '"' + (past ? ' disabled' : '') + '>' + PERIOD_LABEL[p] + '<span class="mk"></span></button>';
+            return '<button type="button" class="pill' + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="' + p + '"' + (past ? ' disabled' : '') + '><span class="pl"><b>' + PERIOD_LABEL[p] + '</b><span class="mk"></span></span><span class="wl"></span></button>';
           }).join('') + '</div>';
       }
     }
@@ -298,10 +327,11 @@
         '<span><i class="mk k-mine"></i>自分のみ</span>' +
         '<span><i class="mk k-theirs"></i>相手のみ</span>' +
         '<span><i class="gchip">✓</i>ふたりとも</span>' +
+        '<span><i class="mk k-cross"></i>時間がすれ違い</span>' +
         '<span><i class="mk k-none"></i>未選択</span>' +
         '<span><i class="today-chip">' + Number(today.slice(8)) + '</i>今日</span>' +
       '</section>' +
-      '<p class="note">空いている日をタップ。土日・祝日は「昼」「夜」を選べます。</p>' +
+      '<p class="note">空いている日をタップ。タップするたびに「終日 → 〜9 → 〜18 → 21〜 → 解除」と切り替わります（時刻は設定で変更）。土日・祝日は「昼」「夜」を選べます。</p>' +
       '<p class="note small">曜日（月・火…）をタップでその月をまとめて選択。横になぞっても連続で選べます。<br>未選択は「空きの登録なし」で、予定があるという意味ではありません。</p>' +
       '<section class="card"><h2>ふたりが空いている日</h2><div id="matches"></div></section>' +
       '<div id="invite-area"></div>';
@@ -312,16 +342,19 @@
   function paint() {
     if (!C || !C.loaded || !document.getElementById('grid')) return;
     var els = document.querySelectorAll('#grid [data-period]');
-    var i, el, k, st, u;
+    var i, el, k, st, u, info, wl;
     for (i = 0; i < els.length; i++) {
       el = els[i];
       k = keyOf(el.getAttribute('data-date'), el.getAttribute('data-period'));
-      st = stateOf(k);
+      info = slotInfo(k);
+      st = info.st;
       u = unsavedState(k);
+      wl = el.querySelector('.wl');
+      if (wl.textContent !== info.text) wl.textContent = info.text;
       if (el.getAttribute('data-st') !== st) el.setAttribute('data-st', st);
       if ((el.getAttribute('data-unsaved') || '') !== u) { if (u) el.setAttribute('data-unsaved', u); else el.removeAttribute('data-unsaved'); }
       el.setAttribute('aria-pressed', isMine(k) ? 'true' : 'false');
-      el.setAttribute('aria-label', labelFor(el.getAttribute('data-date'), el.getAttribute('data-period'), st, u));
+      el.setAttribute('aria-label', labelFor(el.getAttribute('data-date'), el.getAttribute('data-period'), info, u));
     }
     var offs = document.querySelectorAll('#grid [data-off]');
     for (i = 0; i < offs.length; i++) {
@@ -335,12 +368,13 @@
     paintInvite();
   }
 
-  var STATE_TEXT = { none: '未選択', mine: '自分だけ空き', theirs: '相手だけ空き', both: 'ふたりとも空き' };
-  function labelFor(date, period, st, u) {
+  var STATE_TEXT = { none: '未選択', mine: '自分だけ空き', theirs: '相手だけ空き', both: 'ふたりとも空き', cross: '両方空きだが時間がすれ違い' };
+  function labelFor(date, period, info, u) {
     var p = JP.parse(date);
     var t = p.m + '月' + p.d + '日(' + DOW_LABELS[JP.dow(date)] + ')' + (period !== 'all' ? ' ' + PERIOD_LABEL[period] : '');
     var hol = JP.holidayName(date);
-    return t + (hol ? ' ' + hol : '') + ': ' + STATE_TEXT[st] + (u === 'pending' ? '（保存中）' : u === 'failed' ? '（未保存）' : '');
+    return t + (hol ? ' ' + hol : '') + ': ' + STATE_TEXT[info.st] + (info.long ? '（' + info.long + '）' : '') +
+      (u === 'pending' ? '（保存中）' : u === 'failed' ? '（未保存）' : '');
   }
 
   function paintSync() {
@@ -372,7 +406,7 @@
       var date = JP.fmt(y, m, d);
       if (date < today) continue;
       var ps = JP.periodsOf(date).filter(function (p) { return stateOf(keyOf(date, p)) === 'both'; });
-      if (ps.length) out.push({ date: date, periods: ps, d: d });
+      if (ps.length) out.push({ date: date, periods: ps, d: d, longs: ps.map(function (p) { return slotInfo(keyOf(date, p)).long; }) });
     }
     return out;
   }
@@ -385,7 +419,8 @@
       var list = matchesOfMonth();
       html = list.length ? '<div class="chips">' + list.map(function (x) {
         var t = C.month.m + '/' + x.d + '(' + DOW_LABELS[JP.dow(x.date)] + ')';
-        if (x.periods[0] !== 'all') t += ' ' + x.periods.map(function (p) { return PERIOD_LABEL[p]; }).join('・');
+        if (x.periods[0] === 'all') { if (x.longs[0]) t += ' ' + x.longs[0]; }
+        else t += ' ' + x.periods.map(function (p, i) { return PERIOD_LABEL[p] + (x.longs[i] ? '(' + x.longs[i] + ')' : ''); }).join('・');
         return '<span class="chip">' + t + '</span>';
       }).join('') + '</div>' : '<p class="empty-msg">この月はまだ、ふたりが重なる日がありません。</p>';
     }
@@ -414,7 +449,8 @@
     if (e.target.releasePointerCapture && e.pointerId != null) { try { e.target.releasePointerCapture(e.pointerId); } catch (x) { /* noop */ } }
     var period = el.getAttribute('data-period');
     var key = keyOf(el.getAttribute('data-date'), period);
-    drag = { x: e.clientX, y: e.clientY, moved: false, key: key, period: period, on: !isMine(key), done: {}, el: el };
+    // タップで次の状態へ。なぞり始めたときは、この「次の状態」を通ったセルにも適用する
+    drag = { x: e.clientX, y: e.clientY, moved: false, key: key, period: period, code: nextCode(period, myCode(key)), done: {}, el: el };
   });
   document.addEventListener('pointermove', function (e) {
     if (!drag || !C) return;
@@ -429,7 +465,7 @@
   function endDrag(commit) {
     var d = drag; drag = null;
     if (C) C.dragging = false;
-    if (d && commit && !d.moved && C) setMine([d.key], d.on);
+    if (d && commit && !d.moved && C) { var m = {}; m[d.key] = d.code; setCodes(m); }
   }
   document.addEventListener('pointerup', function () { endDrag(true); });
   document.addEventListener('pointercancel', function () { endDrag(false); });
@@ -437,13 +473,15 @@
   function applyDrag(el) {
     if (el.disabled) return;
     var date = el.getAttribute('data-date'), period = el.getAttribute('data-period');
-    var keys = [];
-    if (drag.period === 'all') keys = JP.periodsOf(date).map(function (p) { return keyOf(date, p); }); // 平日→1日分、土日祝→昼夜とも
-    else if (period === drag.period) keys = [keyOf(date, period)];                                  // 昼から始めたら昼だけ、夜なら夜だけ
-    keys = keys.filter(function (k) { return !drag.done[k]; });
-    if (!keys.length) return;
-    keys.forEach(function (k) { drag.done[k] = true; });
-    setMine(keys, drag.on);
+    var map = {};
+    if (drag.period === 'all') {
+      // 平日から始めた: 平日は同じ状態、土日祝は昼・夜とも（範囲なしの）終日/解除
+      JP.periodsOf(date).forEach(function (p) { map[keyOf(date, p)] = p === 'all' ? drag.code : (drag.code ? 'F' : ''); });
+    } else if (period === drag.period) {
+      map[keyOf(date, period)] = drag.code; // 昼から始めたら昼だけ、夜なら夜だけ
+    }
+    Object.keys(map).forEach(function (k) { if (drag.done[k]) delete map[k]; else drag.done[k] = true; });
+    if (size(map)) setCodes(map);
   }
 
   $app.addEventListener('click', function (e) {
@@ -453,7 +491,8 @@
     if (b.hasAttribute('data-period')) {
       if (e.detail === 0 && C && !b.disabled) {
         var k = keyOf(b.getAttribute('data-date'), b.getAttribute('data-period'));
-        setMine([k], !isMine(k));
+        var m = {}; m[k] = nextCode(b.getAttribute('data-period'), myCode(k));
+        setCodes(m);
       }
       return;
     }
@@ -482,16 +521,23 @@
   }
 
   function bulkDow(w) {
-    var y = C.month.y, m = C.month.m, today = JP.today(), keys = [];
+    var y = C.month.y, m = C.month.m, today = JP.today(), slots = [];
     for (var d = 1; d <= JP.daysInMonth(y, m); d++) {
       var date = JP.fmt(y, m, d);
       if (date < today || JP.dow(date) !== w) continue;
-      JP.periodsOf(date).forEach(function (p) { keys.push(keyOf(date, p)); });
+      JP.periodsOf(date).forEach(function (p) { slots.push({ k: keyOf(date, p), p: p }); });
     }
-    if (!keys.length) return toast('この月に選べる' + DOW_LABELS[w] + '曜日がありません');
-    var allOn = keys.every(isMine);
-    setMine(keys, !allOn);
-    toast(DOW_LABELS[w] + '曜日をまとめて' + (allOn ? '解除しました' : '選択しました'));
+    if (!slots.length) return toast('この月に選べる' + DOW_LABELS[w] + '曜日がありません');
+    // 平日の列は「平日の切り替え順」、土日の列は「夜の切り替え順」で進める。全部同じ状態なら次へ、ばらばらなら終日にそろえる
+    var main = slots.some(function (s) { return s.p === 'all'; }) ? 'all' : 'night';
+    var codes = slots.filter(function (s) { return s.p === main; }).map(function (s) { return myCode(s.k); });
+    var uniform = codes.every(function (c) { return c === codes[0]; });
+    var next = uniform ? nextCode(main, codes[0]) : 'F';
+    var map = {};
+    slots.forEach(function (s) { map[s.k] = s.p === main ? next : (next ? 'F' : ''); });
+    setCodes(map);
+    var what = !next ? '解除' : next === 'F' ? '終日' : JP.rangeLong(JP.codeRange(next));
+    toast(DOW_LABELS[w] + '曜日をまとめて「' + what + '」にしました');
   }
 
   /* ---------- 共有（LINE / コピー） ---------- */
@@ -542,10 +588,37 @@
     });
   }
 
+  // パターン編集欄: 時刻(1〜23) と「まで／から／なし」。最大3つ
+  function presetRows(kind) {
+    var rows = '';
+    for (var i = 0; i < 3; i++) {
+      var c = C.presets[kind][i] || '', t = c.charAt(0), h = c ? Number(c.slice(1)) : (kind === 'night' ? 21 : 18);
+      var hours = '';
+      for (var x = 1; x < 24; x++) hours += '<option value="' + x + '"' + (x === h ? ' selected' : '') + '>' + x + '時</option>';
+      rows += '<div class="preset-row" data-kind="' + kind + '"><select class="ph" aria-label="時刻">' + hours + '</select>' +
+        '<select class="pk" aria-label="種類"><option value=""' + (!c ? ' selected' : '') + '>使わない</option><option value="U"' + (t === 'U' ? ' selected' : '') + '>まで空き (〜)</option><option value="S"' + (t === 'S' ? ' selected' : '') + '>から空き (〜から)</option></select></div>';
+    }
+    return rows;
+  }
+  function readPresets(root, kind) {
+    var out = [];
+    Array.prototype.forEach.call(root.querySelectorAll('.preset-row[data-kind="' + kind + '"]'), function (row) {
+      var t = row.querySelector('.pk').value, h = row.querySelector('.ph').value;
+      var code = t ? t + h : '';
+      if (code && out.indexOf(code) < 0) out.push(code);
+    });
+    return out;
+  }
+
   function openSettings() {
     var html = '<h2>設定</h2>' +
       '<h3>あなたの表示名</h3><div class="field"><input id="rn" maxlength="12" value="' + esc(C.me.name) + '" aria-label="表示名"></div><p class="err-text" id="rn-err"></p>' +
       '<button type="button" class="btn primary" id="rn-save">名前を保存</button>' +
+      '<h3>平日の空き方パターン</h3><p>日付をタップするたびに「終日 → 下のパターン → 解除」と切り替わります。バイトの時間に合わせて変えられます（例: 9時まで／18時まで／21時から）。</p>' +
+      presetRows('weekday') +
+      '<h3>土日・祝日の「夜」のパターン</h3><p>夜をタップするたびに「夜(終日) → 下のパターン → 解除」と切り替わります。昼は 選択 ⇄ 解除 のみです。</p>' +
+      presetRows('night') +
+      '<p class="err-text" id="pr-err"></p><button type="button" class="btn primary" id="pr-save">パターンを保存</button>' +
       '<h3>この端末以外で開くとき</h3><p>LINEの中と外のブラウザなど、別の場所で同じ「あなた」として使うためのリンクです。<b>相手には送らないでください</b>（開いた人があなたとして操作できます）。</p>' +
       '<button type="button" class="btn" id="restore">' + ICON.link + '自分用の復元リンクをコピー</button>' +
       '<h3>このカレンダー</h3><button type="button" class="btn" id="newcal">新しいカレンダーを作る</button>' +
@@ -560,6 +633,13 @@
         var s = C;
         api('rename', { id: s.id, name: name }, s.token).then(function (r) {
           s.me.name = r.name; rememberCal(s.id, s.token, r.name); closeSheet(); renderCalendar(); toast('名前を変更しました');
+        }, function () { err.textContent = '保存できませんでした。通信を確認してもう一度お試しください'; });
+      };
+      root.querySelector('#pr-save').onclick = function () {
+        var presets = { weekday: readPresets(root, 'weekday'), night: readPresets(root, 'night') };
+        var s = C, err = root.querySelector('#pr-err');
+        api('prefs', { id: s.id, presets: presets }, s.token).then(function (r) {
+          s.presets = r.presets; closeSheet(); paint(); toast('パターンを保存しました');
         }, function () { err.textContent = '保存できませんでした。通信を確認してもう一度お試しください'; });
       };
       root.querySelector('#restore').onclick = function () {

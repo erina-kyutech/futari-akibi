@@ -28,4 +28,20 @@ assert.deepStrictEqual(J.periodsOf('2026-11-03'), ['noon', 'night']);
 assert.deepStrictEqual(J.periodsOf('2026-11-04'), ['all']);
 assert.strictEqual(J.addDays('2026-12-31', 1), '2027-01-01');
 assert.strictEqual(J.parse('2026-02-30'), null);
+// 空きの範囲（時間帯パターン）
+assert.deepStrictEqual(J.codeRange('F'), [0, 24]);
+assert.deepStrictEqual(J.codeRange('U18'), [0, 18]);
+assert.deepStrictEqual(J.codeRange('S21'), [21, 24]);
+assert.deepStrictEqual(J.overlap('F', 'U18'), [0, 18]);          // 終日 × 18時まで = 18時まで
+assert.deepStrictEqual(J.overlap('U18', 'U9'), [0, 9]);          // 18時まで × 9時まで = 9時まで
+assert.deepStrictEqual(J.overlap('U18', 'S21'), null);           // 18時まで × 21時から = すれ違い
+assert.deepStrictEqual(J.overlap('U9', 'S9'), null);             // 境界は重ならない
+assert.deepStrictEqual(J.overlap('S8', 'U9'), [8, 9]);
+assert.deepStrictEqual(J.overlap('S21', 'F'), [21, 24]);
+assert.deepStrictEqual(J.overlap('F', 'F'), [0, 24]);
+assert.strictEqual(J.rangeShort([0, 24]), ''); assert.strictEqual(J.rangeShort([0, 18]), '〜18');
+assert.strictEqual(J.rangeShort([21, 24]), '21〜'); assert.strictEqual(J.rangeShort([8, 9]), '8〜9');
+assert.strictEqual(J.rangeLong([0, 18]), '18時まで'); assert.strictEqual(J.rangeLong([21, 24]), '21時から');
+for (const ok of ['F', 'U1', 'U23', 'S1', 'S23', 'U9']) assert.ok(J.validCode(ok), ok);
+for (const bad of ['', 'U0', 'U24', 'S0', 'X5', 'u18', 'U018', 'F1', null, 5]) assert.ok(!J.validCode(bad), String(bad));
 console.log('holidays OK (' + Object.keys(expect).length + ' checks)');

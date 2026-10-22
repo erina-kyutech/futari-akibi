@@ -126,6 +126,28 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 button:disabled { cursor: default; }
 button:focus-visible { outline: 3px solid #222; outline-offset: 1px; }
 
+/* 範囲つきの空き（〜18 / 21〜）の小さな表記と「時間がすれ違い」の状態 */
+.wl { font-size: 11px; font-weight: 700; line-height: 1.1; min-height: 12px; letter-spacing: -.02em; }
+.wl:empty { display: none; }
+.day .wl { align-self: center; margin-top: 1px; }
+[data-st="mine"] .wl { color: #2d6fb8; }
+[data-st="theirs"] .wl { color: #b8466d; }
+[data-st="both"] .wl { color: #fff; }
+.off[data-match="some"] .pill:not([data-st="both"]) .wl { color: inherit; }
+.pill .pl { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.pill { flex-direction: column; justify-content: center; gap: 1px; min-height: 32px; height: auto; padding-top: 3px; padding-bottom: 3px; }
+.pill b { font-weight: 600; }
+[data-st="cross"] { background: #fff6e0; }
+.pill[data-st="cross"] { border-color: #f0d9a0; }
+[data-st="cross"] .mk { width: auto; gap: 2px; display: inline-flex; align-items: center; }
+[data-st="cross"] .mk::before, .mk.k-cross::before { width: 9px; height: 9px; border-radius: 50%; background: var(--blue); }
+[data-st="cross"] .mk::after, .mk.k-cross::after { content: ""; display: block; width: 7px; height: 7px; background: var(--pink); transform: rotate(45deg); }
+.mk.k-cross { width: auto; gap: 2px; display: inline-flex; align-items: center; }
+.preset-row { display: flex; gap: 8px; margin: 6px 0; }
+.preset-row select { height: 44px; border: 1.5px solid #d4d4d0; border-radius: 10px; padding: 0 8px; font-size: 15px; background: #fff; color: var(--ink); }
+.preset-row .ph { width: 92px; }
+.preset-row .pk { flex: 1; }
+
 /* 凡例 */
 .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; margin: 16px 0 6px; font-size: 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }

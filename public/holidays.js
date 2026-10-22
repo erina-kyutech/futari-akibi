@@ -126,7 +126,38 @@
     return dayType(s) === 'off' ? ['noon', 'night'] : ['all'];
   }
 
+  /* ---- 空きの範囲（時間帯パターン） ----
+   * code: 'F'=終日 / 'U18'=18時まで / 'S21'=21時から。時間は 0〜24 の区間で扱う。 */
+  var CODE_RE = /^(F|[US]([1-9]|1[0-9]|2[0-3]))$/;
+  function validCode(c) { return typeof c === 'string' && CODE_RE.test(c); }
+  function codeRange(c) {
+    if (c === 'F') return [0, 24];
+    var h = +c.slice(1);
+    return c.charAt(0) === 'U' ? [0, h] : [h, 24];
+  }
+  // 2人の範囲の重なり。重ならなければ null（時間がすれ違っている）
+  function overlap(a, b) {
+    var x = codeRange(a), y = codeRange(b);
+    var s = Math.max(x[0], y[0]), e = Math.min(x[1], y[1]);
+    return s < e ? [s, e] : null;
+  }
+  // セルに載せる短い表記: '' / '〜18' / '21〜' / '8〜9'
+  function rangeShort(r) {
+    if (r[0] === 0 && r[1] === 24) return '';
+    if (r[0] === 0) return '〜' + r[1];
+    if (r[1] === 24) return r[0] + '〜';
+    return r[0] + '〜' + r[1];
+  }
+  // 読み上げ・一覧用: '' / '18時まで' / '21時から' / '8〜9時'
+  function rangeLong(r) {
+    if (r[0] === 0 && r[1] === 24) return '';
+    if (r[0] === 0) return r[1] + '時まで';
+    if (r[1] === 24) return r[0] + '時から';
+    return r[0] + '〜' + r[1] + '時';
+  }
+
   return {
+    validCode: validCode, codeRange: codeRange, overlap: overlap, rangeShort: rangeShort, rangeLong: rangeLong,
     parse: parse, dow: dow, addDays: addDays, today: today, daysInMonth: daysInMonth,
     fmt: fmt, holidayName: holidayName, holidaysOfYear: holidaysOfYear,
     dayType: dayType, periodsOf: periodsOf

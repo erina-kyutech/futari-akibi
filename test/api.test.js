@@ -161,5 +161,46 @@ const holidayWeekday = future((d) => JP.holidayName(d) && JP.dow(d) > 0 && JP.do
     const r = await fetch(BASE + '/api/state'); assert.strictEqual(r.status, 405); // GET は不可
   });
 
+  await test('11. 時間帯パターン(code)の保存・更新・検証', async () => {
+    const set = (tok, changes) => call('set', { id: calId, changes }, tok);
+    const sA = async () => (await state(calId, A)).body;
+    ok(await set(A, [{ date: weekday2, period: 'all', code: 'U18' }]), 'U18');
+    let a = await sA();
+    assert.deepStrictEqual(a.mine, [weekday2 + '|all']); assert.deepStrictEqual(a.mineW, { [weekday2 + '|all']: 'U18' });
+    // 相手側には theirsW として見える。終日は W に入らない
+    ok(await set(B, [{ date: weekday2, period: 'all', code: 'F' }]), 'B F');
+    const b = (await state(calId, B)).body;
+    assert.deepStrictEqual(b.theirsW, { [weekday2 + '|all']: 'U18' }); assert.deepStrictEqual(b.mineW, {});
+    // 同じ項目の範囲変更は1行の更新（行が増えない）。旧形式 on:true は終日
+    ok(await set(A, [{ date: weekday2, period: 'all', code: 'S21' }]), 'S21');
+    a = await sA(); assert.deepStrictEqual(a.mine, [weekday2 + '|all']); assert.deepStrictEqual(a.mineW, { [weekday2 + '|all']: 'S21' });
+    ok(await set(A, [{ date: weekday2, period: 'all', on: true }]), 'legacy on');
+    a = await sA(); assert.deepStrictEqual(a.mineW, {});
+    // 土日祝の夜は範囲OK、昼は範囲なし(F/解除のみ)
+    ok(await set(A, [{ date: offday, period: 'night', code: 'U21' }]), 'night U21');
+    assert.strictEqual((await sA()).mineW[offday + '|night'], 'U21');
+    assert.strictEqual((await set(A, [{ date: offday, period: 'noon', code: 'U18' }])).status, 400);
+    // 不正な code
+    for (const code of ['U0', 'U24', 'S0', 'X5', 'u18', 'F1', 'U018', 'U', 5, null]) {
+      assert.strictEqual((await set(A, [{ date: weekday2, period: 'all', code }])).status, 400, 'code ' + code);
+    }
+    // 解除すると範囲も消える
+    ok(await set(A, [{ date: weekday2, period: 'all', code: '' }, { date: offday, period: 'night', code: '' }]), 'clear');
+    a = await sA(); assert.deepStrictEqual([a.mine, a.mineW], [[], {}]);
+    ok(await set(B, [{ date: weekday2, period: 'all', code: '' }]), 'B clear');
+  });
+
+  await test('12. パターン設定は本人だけ・検証つき', async () => {
+    const s0 = (await state(calId, A)).body;
+    assert.deepStrictEqual(s0.presets, { weekday: ['U9', 'U18', 'S21'], night: ['U21', 'U23'] }); // 初期値
+    const r = await call('prefs', { id: calId, presets: { weekday: ['U8', 'U8', 'S22', 'F', 'bad', 'U12', 'U13'], night: [] } }, A);
+    ok(r, 'prefs');
+    assert.deepStrictEqual(r.body.presets, { weekday: ['U8', 'S22', 'U12'], night: [] }); // 重複・F・不正を除き最大3つ
+    assert.deepStrictEqual((await state(calId, A)).body.presets, { weekday: ['U8', 'S22', 'U12'], night: [] });
+    assert.deepStrictEqual((await state(calId, B)).body.presets, s0.presets, '相手の設定は変わらない');
+    assert.strictEqual((await call('prefs', { id: calId, presets: {} }, undefined)).status, 403);
+    assert.strictEqual((await call('prefs', { id: calId, presets: {} }, 'x'.repeat(40))).status, 403);
+  });
+
   console.log('\nAPI OK (' + n + ' groups)');
 })().catch((e) => { console.error('\nFAILED:', e.message || e); process.exit(1); });
