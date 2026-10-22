@@ -90,7 +90,7 @@
       desired: {}, inflight: {},                 // 未送信 / 送信中の自分の変更（key -> code。''は解除）
       sending: false, failing: false, failCount: 0, epoch: 0, savedAt: 0,
       online: true, needFull: false, polling: false,
-      month: monthOf(JP.today()), dragging: false,
+      month: monthOf(JP.today()), dragging: false, editing: false,
       flushT: null, pollT: null
     };
   }
@@ -321,7 +321,7 @@
       '<nav class="month"><button type="button" class="nav-btn" data-action="prev" aria-label="前の月"' + (atMin ? ' disabled' : '') + '>' + ICON.left + '</button>' +
         '<button type="button" class="month-title" data-action="months">' + y + '年' + m + '月' + ICON.down + '</button>' +
         '<button type="button" class="nav-btn" data-action="next" aria-label="次の月"' + (atMax ? ' disabled' : '') + '>' + ICON.right + '</button></nav>' +
-      '<div class="dows">' + dows + '</div>' +
+      '<div class="dows" id="dows">' + dows + '</div>' +
       '<div class="grid" id="grid">' + cells + '</div>' +
       '<section class="legend" aria-label="凡例">' +
         '<span><i class="mk k-mine"></i>自分のみ</span>' +
@@ -331,10 +331,11 @@
         '<span><i class="mk k-none"></i>未選択</span>' +
         '<span><i class="today-chip">' + Number(today.slice(8)) + '</i>今日</span>' +
       '</section>' +
-      '<p class="note">空いている日をタップ。タップするたびに「終日 → 〜9 → 〜18 → 21〜 → 解除」と切り替わります（時刻は設定で変更）。土日・祝日は「昼」「夜」を選べます。</p>' +
+      '<p class="note">変更するときは、下の「編集する」を押してから日付をタップ。タップするたびに「終日 → 〜9 → 〜18 → 21〜 → 解除」と切り替わります（時刻は設定で変更）。土日・祝日は「昼」「夜」を選べます。</p>' +
       '<p class="note small">曜日（月・火…）をタップでその月をまとめて選択。横になぞっても連続で選べます。<br>未選択は「空きの登録なし」で、予定があるという意味ではありません。</p>' +
       '<section class="card"><h2>ふたりが空いている日</h2><div id="matches"></div></section>' +
-      '<div id="invite-area"></div>';
+      '<div id="invite-area"></div>' +
+      '<div class="editbar"><button type="button" id="editbtn" data-action="edit"></button></div>';
     paint();
   }
 
@@ -366,6 +367,19 @@
     paintSync();
     paintMatches();
     paintInvite();
+    paintEdit();
+  }
+
+  function paintEdit() {
+    var btn = document.getElementById('editbtn'), grid = document.getElementById('grid'), dows = document.getElementById('dows');
+    if (!btn) return;
+    var on = !!C.editing;
+    var label = on ? '✓ 編集を終わる' : '✏ 編集する';
+    if (btn.textContent !== label) btn.textContent = label;
+    btn.className = on ? 'on' : '';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    grid.className = 'grid' + (on ? ' editing' : '');
+    dows.className = 'dows' + (on ? '' : ' locked');
   }
 
   var STATE_TEXT = { none: '未選択', mine: '自分だけ空き', theirs: '相手だけ空き', both: 'ふたりとも空き', cross: '両方空きだが時間がすれ違い' };
@@ -443,7 +457,7 @@
   function targetOf(node) { return node && node.closest ? node.closest('[data-period]') : null; }
 
   $app.addEventListener('pointerdown', function (e) {
-    if (!C || e.button > 0) return;
+    if (!C || !C.editing || e.button > 0) return; // 編集モードのときだけ、タップ・なぞり選択を受け付ける
     var el = targetOf(e.target);
     if (!el || el.disabled) return;
     if (e.target.releasePointerCapture && e.pointerId != null) { try { e.target.releasePointerCapture(e.pointerId); } catch (x) { /* noop */ } }
@@ -457,10 +471,17 @@
     if (!drag.moved) {
       if (Math.abs(e.clientX - drag.x) < 10 && Math.abs(e.clientY - drag.y) < 10) return;
       drag.moved = true; C.dragging = true;
+      drag.lx = drag.x; drag.ly = drag.y;
       applyDrag(drag.el);
     }
-    var t = targetOf(document.elementFromPoint(e.clientX, e.clientY));
-    if (t) applyDrag(t);
+    // 素早くなぞるとイベントが飛び飛びになるので、前回の位置との間を細かくたどって通ったセルを全部拾う
+    var dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
+    var steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 8));
+    for (var i = 1; i <= steps; i++) {
+      var t = targetOf(document.elementFromPoint(drag.lx + dx * i / steps, drag.ly + dy * i / steps));
+      if (t) applyDrag(t);
+    }
+    drag.lx = e.clientX; drag.ly = e.clientY;
   });
   function endDrag(commit) {
     var d = drag; drag = null;
@@ -489,7 +510,9 @@
     if (!b) return;
     // キーボード操作(detail=0)の昼/夜/日付ボタン。マウス・タッチは pointer 側で処理済み
     if (b.hasAttribute('data-period')) {
-      if (e.detail === 0 && C && !b.disabled) {
+      if (!C || b.disabled) return;
+      if (!C.editing) return editHint(); // 閲覧中のタップは何も変えない（スクロール中の誤タップ対策）
+      if (e.detail === 0) {
         var k = keyOf(b.getAttribute('data-date'), b.getAttribute('data-period'));
         var m = {}; m[k] = nextCode(b.getAttribute('data-period'), myCode(k));
         setCodes(m);
@@ -516,8 +539,23 @@
     if (a === 'discard') return discardUnsaved();
     if (a === 'copyInvite') return copyText(inviteUrl(), '招待リンクをコピーしました');
     if (a === 'line') return openLine();
-    if (a === 'dow') return C && bulkDow(Number(b.getAttribute('data-dow')));
+    if (a === 'dow') return C && (C.editing ? bulkDow(Number(b.getAttribute('data-dow'))) : editHint());
+    if (a === 'edit') return C && toggleEdit();
     if (a === 'new') return showCreate();
+  }
+
+  /* 編集モード: ふだんは閲覧専用（誤タップ防止）。「編集する」を押している間だけ選択・解除できる */
+  var hintAt = 0;
+  function editHint() {
+    if (Date.now() - hintAt < 3000) return;
+    hintAt = Date.now();
+    toast('変更するには、下の「編集する」を押してください');
+  }
+  function toggleEdit() {
+    C.editing = !C.editing;
+    drag = null; C.dragging = false;
+    paint();
+    if (!C.editing && size(C.desired) + size(C.inflight) === 0) toast('編集を終わりました');
   }
 
   function bulkDow(w) {

@@ -148,6 +148,15 @@ button:focus-visible { outline: 3px solid #222; outline-offset: 1px; }
 .preset-row .ph { width: 92px; }
 .preset-row .pk { flex: 1; }
 
+/* 編集モード（ふだんは閲覧専用。スクロール中の誤タップを防ぐ） */
+.grid { touch-action: auto; }
+.grid.editing { touch-action: pan-y; outline: 3px solid var(--blue); outline-offset: 3px; border-color: var(--blue); }
+.dows.locked .dow { opacity: .55; }
+.app { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.editbar { position: fixed; left: 0; right: 0; bottom: calc(14px + env(safe-area-inset-bottom)); display: flex; justify-content: center; pointer-events: none; z-index: 10; }
+.editbar button { pointer-events: auto; min-width: 200px; height: 54px; padding: 0 28px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; font-size: 17px; font-weight: 800; box-shadow: 0 6px 20px rgba(0, 0, 0, .28); }
+.editbar button.on { background: var(--green); }
+
 /* 凡例 */
 .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; margin: 16px 0 6px; font-size: 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -192,6 +201,6 @@ button:focus-visible { outline: 3px solid #222; outline-offset: 1px; }
 .months { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
 .months button { border: 1px solid var(--line); background: #fff; border-radius: 12px; height: 48px; font-weight: 600; }
 .months button.cur { background: #222; color: #fff; }
-.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; opacity: 0; pointer-events: none; transition: .2s; z-index: 30; max-width: 90vw; text-align: center; }
+.toast { position: fixed; left: 50%; bottom: calc(86px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; opacity: 0; pointer-events: none; transition: .2s; z-index: 30; width: max-content; max-width: 88vw; text-align: center; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .share-input { width: 100%; font-size: 13px; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
