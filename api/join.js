@@ -1,10 +1,10 @@
 'use strict';
 const crypto = require('crypto');
-const { sql, isUuid, newSecret, hashToken, safeEqual, HttpError, handler, cleanName } = require('../lib/core');
+const { sql, isUuid, newSecret, hashToken, safeEqual, HttpError, handler, cleanName, setTokenCookie } = require('../lib/core');
 
 // 招待コードを持つ人が、空いている参加枠(slot 2)に1人だけ参加できる。
 // (calendar_id, slot) の一意制約により、同時に押されても2人目は必ず1人に絞られる。
-module.exports = handler('POST', async (req, body) => {
+module.exports = handler('POST', async (req, body, res) => {
   const { id, invite } = body;
   const name = cleanName(body.name);
   if (!isUuid(id) || typeof invite !== 'string' || invite.length > 200) throw new HttpError(404, 'invalid_invite');
@@ -20,5 +20,6 @@ module.exports = handler('POST', async (req, body) => {
     returning id`;
   if (!inserted.length) throw new HttpError(409, 'full');
   await db`update calendars set rev = rev + 1 where id = ${id}`;
+  setTokenCookie(req, res, id, token);
   return { id, token, name };
 });

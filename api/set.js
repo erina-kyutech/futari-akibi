@@ -7,8 +7,8 @@ const MAX_CHANGES = 500;
 // リクエストで相手を指定する手段はない。変更は「この項目をこの状態にする」という冪等な指定
 // （code: ''=解除 / 'F'=終日 / 'U18'=18時まで / 'S21'=21時から）で、
 // 変更した項目の行だけを追加・更新・削除する（相手の行や他の項目には触れない）。
-module.exports = handler('POST', async (req, body) => {
-  const me = await authMember(req, body.id);
+module.exports = handler('POST', async (req, body, res) => {
+  const me = await authMember(req, body.id, res);
   const changes = body.changes;
   if (!Array.isArray(changes) || changes.length === 0 || changes.length > MAX_CHANGES) throw new HttpError(400, 'invalid_changes');
 

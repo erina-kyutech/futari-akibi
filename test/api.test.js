@@ -202,5 +202,36 @@ const holidayWeekday = future((d) => JP.holidayName(d) && JP.dow(d) > 0 && JP.do
     assert.strictEqual((await call('prefs', { id: calId, presets: {} }, 'x'.repeat(40))).status, 403);
   });
 
+  await test('13. 鍵の控えクッキー: 認証できたときだけ発行。クッキーだけでは認証されない', async () => {
+    const raw = (path, body, token, cookie) => fetch(BASE + '/api/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+    // 作成・参加で発行される（値は発行された鍵そのもの。1年・Lax）
+    const c = await call('create', { name: 'cookie' });
+    const rc = await raw('create', { name: 'cookie2' });
+    const ck = rc.headers.get('set-cookie'); const cj = await rc.json();
+    assert.ok(ck && ck.startsWith('futari_' + cj.id + '=' + cj.token + ';'), 'create sets cookie');
+    assert.ok(/Max-Age=31536000/.test(ck) && /SameSite=Lax/.test(ck) && /Path=\//.test(ck), ck.replace(cj.token, '***'));
+    const rj = await raw('join', { id: cj.id, invite: cj.invite, name: 'g' });
+    const jj = await rj.json(); const jck = rj.headers.get('set-cookie');
+    assert.ok(jck && jck.startsWith('futari_' + cj.id + '=' + jj.token + ';'), 'join sets cookie');
+    // 認証できた state / set は更新する
+    const ok1 = await raw('state', { id: calId }, A);
+    assert.ok(ok1.headers.get('set-cookie').startsWith('futari_' + calId + '=' + A + ';'), 'state refreshes cookie');
+    const ok2 = await raw('set', { id: calId, changes: [{ date: weekday, period: 'all', code: '' }] }, A);
+    assert.ok(ok2.headers.get('set-cookie'), 'set refreshes cookie');
+    // 失敗した認証では発行しない
+    const bad = await raw('state', { id: calId }, 'wrong'.repeat(9));
+    assert.strictEqual(bad.status, 403); assert.strictEqual(bad.headers.get('set-cookie'), null);
+    // クッキーだけ（Authorization なし）では認証されない＝他サイトからの勝手な操作の経路にならない
+    const only = await raw('state', { id: calId }, null, 'futari_' + calId + '=' + A);
+    assert.strictEqual(only.status, 403, 'cookie alone is not accepted');
+    const onlySet = await raw('set', { id: calId, changes: [{ date: weekday, period: 'all', code: 'F' }] }, null, 'futari_' + calId + '=' + A);
+    assert.strictEqual(onlySet.status, 403);
+    assert.ok(c.status === 200);
+  });
+
   console.log('\nAPI OK (' + n + ' groups)');
 })().catch((e) => { console.error('\nFAILED:', e.message || e); process.exit(1); });

@@ -4,8 +4,8 @@ const { sql, handler, authMember, normalizePresets } = require('../lib/core');
 // 参加者本人だけが読める。rev が同じなら本体を返さず unchanged のみ（ポーリングを軽くする）。
 // rev を先に読んでから行を読むので、読み取り中に更新があっても次回のポーリングで必ず追いつく。
 // mine/theirs は空きのある項目("日付|時間帯")の一覧。終日以外は mineW/theirsW に範囲(code)を入れる。
-module.exports = handler('POST', async (req, body) => {
-  const me = await authMember(req, body.id);
+module.exports = handler('POST', async (req, body, res) => {
+  const me = await authMember(req, body.id, res);
   const rev = Number(me.rev);
   if (body.rev != null && Number(body.rev) === rev) return { unchanged: true, rev };
 

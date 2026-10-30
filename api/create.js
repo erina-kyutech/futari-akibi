@@ -1,9 +1,9 @@
 'use strict';
 const crypto = require('crypto');
-const { sql, newSecret, hashToken, handler, cleanName } = require('../lib/core');
+const { sql, newSecret, hashToken, handler, cleanName, setTokenCookie } = require('../lib/core');
 
 // 共有カレンダーを作成し、作成者を参加者1として登録する
-module.exports = handler('POST', async (req, body) => {
+module.exports = handler('POST', async (req, body, res) => {
   const name = cleanName(body.name);
   const id = crypto.randomUUID();
   const memberId = crypto.randomUUID();
@@ -15,5 +15,6 @@ module.exports = handler('POST', async (req, body) => {
     db`insert into members (id, calendar_id, slot, name, token_hash)
        values (${memberId}, ${id}, 1, ${name}, ${hashToken(token)})`,
   ]);
+  setTokenCookie(req, res, id, token);
   return { id, invite, token, name };
 });

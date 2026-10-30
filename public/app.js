@@ -53,6 +53,30 @@
     memStore = st;
     try { window.localStorage.setItem('futari:v1', JSON.stringify(st)); } catch (e) { storageOk = false; }
   }
+  // サーバーが控えとして渡すクッキー（futari_<カレンダーID>）から鍵を読む。
+  // localStorage が自動で消されても（iPhone の Safari 系は約7日触らないと消す）、ここから復元できる。
+  function cookieToken(id) {
+    try {
+      var name = 'futari_' + id + '=', parts = document.cookie.split('; ');
+      for (var i = 0; i < parts.length; i++) if (parts[i].indexOf(name) === 0) return parts[i].slice(name.length);
+    } catch (e) { /* クッキー不可 */ }
+    return '';
+  }
+  function cookieIds() {
+    var out = [];
+    try {
+      document.cookie.split('; ').forEach(function (c) {
+        var m = /^futari_([0-9a-f-]{36})=./.exec(c);
+        if (m) out.push(m[1]);
+      });
+    } catch (e) { /* クッキー不可 */ }
+    return out;
+  }
+  // 鍵が無効だと分かったカレンダーは、この端末の保存データとクッキーから消す（毎回「開けません」で固まらないように）
+  function forgetCal(id) {
+    var st = loadStore(); delete st.cals[id]; if (st.last === id) st.last = null; saveStore(st);
+    try { document.cookie = 'futari_' + id + '=; Max-Age=0; Path=/'; } catch (e) { /* noop */ }
+  }
   function rememberCal(id, token, myName) {
     var st = loadStore();
     st.cals[id] = { token: token, myName: myName, at: Date.now() };
@@ -171,7 +195,7 @@
     }, function (e) {
       if (C !== s) return;
       s.sending = false;
-      if (e.status === 403) return showForbidden();
+      if (e.status === 403) { forgetCal(s.id); return showForbidden(); }
       if (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) {
         // 内容が受け付けられない変更（日付が過ぎた等）は破棄して最新に戻す
         s.inflight = {}; s.epoch++; s.rev = null;
@@ -236,7 +260,7 @@
     }, function (e) {
       if (C !== s) return;
       s.polling = false;
-      if (e.status === 403) return showForbidden();
+      if (e.status === 403) { forgetCal(s.id); return showForbidden(); }
       if (!(e.status > 0) || e.status >= 500) setOnline(false);
       paint();
       pollSoon(Math.min(2000 * (s.online ? 1 : 2), 10000));
@@ -267,6 +291,10 @@
   function openCalendar(id) {
     var st = loadStore();
     var entry = st.cals[id];
+    if (!entry) { // 端末の保存データに無くても、控えのクッキーに鍵があれば復元する
+      var ct = cookieToken(id);
+      if (ct) { rememberCal(id, ct, ''); st = loadStore(); entry = st.cals[id]; }
+    }
     stopSession();
     if (!entry) return showForbidden(true);
     st.last = id; saveStore(st);
@@ -687,6 +715,7 @@
       root.querySelector('#leave').onclick = function () {
         if (!window.confirm('この端末からこのカレンダーを外します。よろしいですか？')) return;
         var st = loadStore(); delete st.cals[C.id]; if (st.last === C.id) st.last = null; saveStore(st);
+        try { document.cookie = 'futari_' + C.id + '=; Max-Age=0; Path=/'; } catch (x) { /* noop */ }
         closeSheet(); stopSession(); showCreate();
       };
     });
@@ -735,10 +764,16 @@
     });
   }
 
-  function showJoin(id, invite) {
+  function showJoin(id, invite, skipCookie) {
     stopSession();
     var st = loadStore();
     if (st.cals[id]) return openCalendar(id); // すでにこの端末で参加済み
+    var ct = skipCookie ? '' : cookieToken(id);
+    if (ct) { // 保存データは消えたが、控えのクッキーに鍵が残っている＝この端末ですでに参加済みの人
+      $app.innerHTML = '<p class="boot">確認しています…</p>';
+      return api('state', { id: id }, ct).then(function (r) { rememberCal(id, ct, r.me.name); openCalendar(id); },
+        function () { showJoin(id, invite, true); });
+    }
     $app.innerHTML = '<p class="boot">招待を確認しています…</p>';
     api('preview', { id: id, invite: invite }).then(function (r) {
       if (!r.ok) return invalidInvite('この招待リンクは無効です。送ってもらったリンクをもう一度確認してください。');
@@ -792,6 +827,8 @@
     if (location.hash === '#/new') return showCreate();
     var st = loadStore();
     if (st.last && st.cals[st.last]) return openCalendar(st.last);
+    var ids = cookieIds(); // 保存データは消えたが、控えのクッキーが残っている場合は、そのカレンダーに戻る
+    if (ids.length) return openCalendar(ids[0]);
     showCreate();
   }
   window.addEventListener('hashchange', function () {
