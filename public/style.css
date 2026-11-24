@@ -127,7 +127,10 @@ button:disabled { cursor: default; }
 button:focus-visible { outline: 3px solid #222; outline-offset: 1px; }
 
 /* 範囲つきの空き（〜18 / 21〜）の小さな表記と「時間がすれ違い」の状態 */
-.wl { font-size: 11px; font-weight: 700; line-height: 1.1; min-height: 12px; letter-spacing: -.02em; }
+.wl { font-size: 12px; font-weight: 800; line-height: 1.15; min-height: 14px; letter-spacing: -.02em; }
+/* 選択済みのセルは背景も色づけして、ひと目で「登録した／してない」が分かるように */
+.day[data-st="mine"] { background: #e3f0fd; }
+.day[data-st="theirs"] { background: #fde8ef; }
 .wl:empty { display: none; }
 .day .wl { align-self: center; margin-top: 1px; }
 [data-st="mine"] .wl { color: #2d6fb8; }

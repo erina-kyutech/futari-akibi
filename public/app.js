@@ -137,12 +137,25 @@
   // text: セルに載せる短い範囲表記、long: 読み上げ・一覧用
   function slotInfo(k) {
     var a = myCode(k), b = C.theirs[k] || '';
+    var noon = k.slice(-5) === '|noon'; // 昼には範囲が無いので、文字は出さない（印だけ）
+    var short = function (r) { return noon ? '' : JP.rangeShort(r); };
     if (a && b) {
       var ov = JP.overlap(a, b);
-      return ov ? { st: 'both', text: JP.rangeShort(ov), long: JP.rangeLong(ov) } : { st: 'cross', text: '', long: '' };
+      return ov ? { st: 'both', text: short(ov), long: JP.rangeLong(ov) } : { st: 'cross', text: '', long: '' };
     }
     var c = a || b, r = c ? JP.codeRange(c) : null;
-    return { st: a ? 'mine' : b ? 'theirs' : 'none', text: r ? JP.rangeShort(r) : '', long: r ? JP.rangeLong(r) : '' };
+    return { st: a ? 'mine' : b ? 'theirs' : 'none', text: r ? short(r) : '', long: r ? JP.rangeLong(r) : '' };
+  }
+
+  /* タップした直後に「何を登録したか」を言葉で出す（印や小さい文字だけだと、終日・解除・何時からが分かりにくいため） */
+  function codeText(code) { return !code ? '解除（空きの登録なし）' : code === 'F' ? '終日 空き' : JP.rangeLong(JP.codeRange(code)) + ' 空き'; }
+  function codeShort(code) { return !code ? '解除' : code === 'F' ? '終日' : JP.rangeShort(JP.codeRange(code)); }
+  function slotName(k) {
+    var p = k.split('|'), d = JP.parse(p[0]);
+    return d.m + '/' + d.d + '(' + DOW_LABELS[JP.dow(p[0])] + ')' + (p[1] === 'all' ? '' : ' ' + PERIOD_LABEL[p[1]]);
+  }
+  function announce(k, code) {
+    toast(slotName(k) + '：' + codeText(code) + ' ／ 次のタップ：' + codeShort(nextCode(k.split('|')[1], code)));
   }
   function stateOf(k) { return slotInfo(k).st; }
 
@@ -514,7 +527,8 @@
   function endDrag(commit) {
     var d = drag; drag = null;
     if (C) C.dragging = false;
-    if (d && commit && !d.moved && C) { var m = {}; m[d.key] = d.code; setCodes(m); }
+    if (d && commit && !d.moved && C) { var m = {}; m[d.key] = d.code; setCodes(m); announce(d.key, d.code); }
+    else if (d && d.moved && C) toast('なぞった ' + size(d.done) + '件を「' + codeShort(d.code) + '」にしました');
   }
   document.addEventListener('pointerup', function () { endDrag(true); });
   document.addEventListener('pointercancel', function () { endDrag(false); });
@@ -543,7 +557,7 @@
       if (e.detail === 0) {
         var k = keyOf(b.getAttribute('data-date'), b.getAttribute('data-period'));
         var m = {}; m[k] = nextCode(b.getAttribute('data-period'), myCode(k));
-        setCodes(m);
+        setCodes(m); announce(k, m[k]);
       }
       return;
     }

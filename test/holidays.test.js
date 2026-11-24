@@ -39,7 +39,7 @@ assert.deepStrictEqual(J.overlap('U9', 'S9'), null);             // 境界は重
 assert.deepStrictEqual(J.overlap('S8', 'U9'), [8, 9]);
 assert.deepStrictEqual(J.overlap('S21', 'F'), [21, 24]);
 assert.deepStrictEqual(J.overlap('F', 'F'), [0, 24]);
-assert.strictEqual(J.rangeShort([0, 24]), ''); assert.strictEqual(J.rangeShort([0, 18]), '〜18');
+assert.strictEqual(J.rangeShort([0, 24]), '終日'); assert.strictEqual(J.rangeShort([0, 18]), '〜18');
 assert.strictEqual(J.rangeShort([21, 24]), '21〜'); assert.strictEqual(J.rangeShort([8, 9]), '8〜9');
 assert.strictEqual(J.rangeLong([0, 18]), '18時まで'); assert.strictEqual(J.rangeLong([21, 24]), '21時から');
 for (const ok of ['F', 'U1', 'U23', 'S1', 'S23', 'U9']) assert.ok(J.validCode(ok), ok);

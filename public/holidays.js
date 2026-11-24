@@ -141,9 +141,9 @@
     var s = Math.max(x[0], y[0]), e = Math.min(x[1], y[1]);
     return s < e ? [s, e] : null;
   }
-  // セルに載せる短い表記: '' / '〜18' / '21〜' / '8〜9'
+  // セルに載せる短い表記: '終日' / '〜18' / '21〜' / '8〜9'
   function rangeShort(r) {
-    if (r[0] === 0 && r[1] === 24) return '';
+    if (r[0] === 0 && r[1] === 24) return '終日';
     if (r[0] === 0) return '〜' + r[1];
     if (r[1] === 24) return r[0] + '〜';
     return r[0] + '〜' + r[1];
