@@ -1,5 +1,5 @@
 'use strict';
-const { sql, handler, authMember, normalizePresets } = require('../lib/core');
+const { sql, handler, authMember, normalizePresets, listPlans } = require('../lib/core');
 
 // 参加者本人だけが読める。rev が同じなら本体を返さず unchanged のみ（ポーリングを軽くする）。
 // rev を先に読んでから行を読むので、読み取り中に更新があっても次回のポーリングで必ず追いつく。
@@ -10,10 +10,11 @@ module.exports = handler('POST', async (req, body, res) => {
   if (body.rev != null && Number(body.rev) === rev) return { unchanged: true, rev };
 
   const db = sql();
-  const [partner, rows] = await Promise.all([
+  const [partner, rows, plans] = await Promise.all([
     db`select name from members where calendar_id = ${body.id} and id <> ${me.id}`,
     db`select a.day::text as day, a.period, a.code, (a.member_id = ${me.id}) as mine
        from availability a where a.calendar_id = ${body.id} order by a.day`,
+    listPlans(body.id),
   ]);
   const out = { mine: [], theirs: [], mineW: {}, theirsW: {} };
   for (const r of rows) {
@@ -28,6 +29,7 @@ module.exports = handler('POST', async (req, body, res) => {
     partner: partner.length ? { name: partner[0].name } : null,
     invite: partner.length ? null : me.invite_code,
     presets: normalizePresets(me.presets),
+    plans,
     ...out,
   };
 });

@@ -37,3 +37,17 @@ create table if not exists availability (
 -- 時間帯パターン機能の追加分（既存DBにも何度実行しても安全。既存の行は code='F'=終日になる）
 alter table availability add column if not exists code text not null default 'F' check (code ~ '^(F|[US]([1-9]|1[0-9]|2[0-3]))$');
 alter table members add column if not exists presets jsonb;
+
+-- 確定した予定（「この日に飲みに行く」など）。2人どちらも追加・編集・削除できる共有メモ。
+-- 1日に複数あってよい（昼ごはん＋夜の飲み など）。空き状況とは独立した別テーブル
+create table if not exists plans (
+  id          uuid primary key,
+  calendar_id uuid not null references calendars(id) on delete cascade,
+  day         date not null,
+  title       text not null check (char_length(title) between 1 and 60),
+  memo        text not null default '' check (char_length(memo) <= 400),
+  created_by  uuid references members(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index if not exists plans_calendar_day on plans (calendar_id, day);

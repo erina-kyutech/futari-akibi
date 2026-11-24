@@ -233,5 +233,49 @@ const holidayWeekday = future((d) => JP.holidayName(d) && JP.dow(d) > 0 && JP.do
     assert.ok(c.status === 200);
   });
 
+  await test('14. 確定した予定(plans): 2人とも編集可・検証・上限・他カレンダー不可', async () => {
+    const plan = (tok, body) => call('plan', { id: calId, ...body }, tok);
+    const day = JP.addDays(today, 10), day2 = JP.addDays(today, 11);
+    // 追加 → 相手の state にも出る
+    let r = await plan(A, { op: 'save', plan: { date: day, title: '  飲みに  行く ', memo: '19時 渋谷駅\n予約済み' } }); ok(r, 'save');
+    assert.strictEqual(r.body.plans.length, 1);
+    assert.deepStrictEqual([r.body.plans[0].date, r.body.plans[0].title, r.body.plans[0].memo], [day, '飲みに 行く', '19時 渋谷駅\n予約済み']);
+    const id1 = r.body.plans[0].id;
+    let sB = (await state(calId, B)).body; assert.strictEqual(sB.plans.length, 1); assert.strictEqual(sB.plans[0].id, id1);
+    // 相手(B)が編集・日付変更できる。rev が進む
+    const before = (await state(calId, A)).body.rev;
+    r = await plan(B, { op: 'save', plan: { id: id1, date: day2, title: 'ごはん', memo: '' } }); ok(r, 'B edits');
+    assert.deepStrictEqual([r.body.plans[0].date, r.body.plans[0].title], [day2, 'ごはん']);
+    assert.ok((await state(calId, A)).body.rev > before);
+    // 検証
+    const bad = [
+      { date: 'x', title: 'a' }, { date: JP.addDays(today, 900), title: 'a' }, { date: JP.addDays(today, -400), title: 'a' },
+      { date: day, title: '' }, { date: day, title: '   ' }, { date: day, title: 'あ'.repeat(31) }, { date: day, title: 'a', memo: 'x'.repeat(201) },
+    ];
+    for (const p of bad) assert.strictEqual((await plan(A, { op: 'save', plan: p })).status, 400, JSON.stringify(p).slice(0, 60));
+    ok(await plan(A, { op: 'save', plan: { date: day, title: 'あ'.repeat(30), memo: 'x'.repeat(200) } }), 'max length ok');
+    assert.strictEqual((await plan(A, { op: 'save', plan: { id: 'nope', date: day, title: 'a' } })).status, 400);
+    assert.strictEqual((await plan(A, { op: 'bogus' })).status, 400);
+    // 1日の上限は5件
+    for (let i = 0; i < 4; i++) ok(await plan(A, { op: 'save', plan: { date: day, title: 'p' + i } }), 'fill'); // 最大長の1件と合わせて5件
+    assert.strictEqual((await plan(A, { op: 'save', plan: { date: day, title: 'over' } })).status, 409, 'per-day limit');
+    // 別カレンダーの予定は触れない(404)・非参加者は403
+    const other = await call('create', { name: 'o' });
+    const op = await call('plan', { id: other.body.id, op: 'save', plan: { date: day, title: 'other' } }, other.body.token); ok(op, 'other save');
+    assert.strictEqual((await plan(A, { op: 'save', plan: { id: op.body.plans[0].id, date: day, title: 'hijack' } })).status, 404);
+    assert.strictEqual((await plan(A, { op: 'delete', planId: op.body.plans[0].id })).status, 200);
+    assert.strictEqual((await call('state', { id: other.body.id }, other.body.token)).body.plans.length, 1, '別カレンダーの予定は消えない');
+    assert.strictEqual((await plan(undefined, { op: 'save', plan: { date: day, title: 'x' } })).status, 403);
+    assert.strictEqual((await plan(other.body.token, { op: 'save', plan: { date: day, title: 'x' } })).status, 403);
+    assert.strictEqual((await plan(other.body.token, { op: 'delete', planId: id1 })).status, 403);
+    // 削除（二重削除も成功扱い）
+    r = await plan(A, { op: 'delete', planId: id1 }); ok(r, 'delete');
+    assert.ok(!r.body.plans.some((p) => p.id === id1));
+    ok(await plan(B, { op: 'delete', planId: id1 }), 'double delete is ok');
+    // 後片付け
+    for (const p of (await state(calId, A)).body.plans) ok(await plan(A, { op: 'delete', planId: p.id }), 'cleanup');
+    assert.deepStrictEqual((await state(calId, B)).body.plans, []);
+  });
+
   console.log('\nAPI OK (' + n + ' groups)');
 })().catch((e) => { console.error('\nFAILED:', e.message || e); process.exit(1); });

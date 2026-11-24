@@ -115,6 +115,7 @@
       sending: false, failing: false, failCount: 0, epoch: 0, savedAt: 0,
       online: true, needFull: false, polling: false,
       month: monthOf(JP.today()), dragging: false, editing: false,
+      plans: [], day: null,                      // 確定した予定の一覧 / 開いている日のシート
       flushT: null, pollT: null
     };
   }
@@ -264,11 +265,13 @@
       s.rev = r.rev; s.me = r.me; s.partner = r.partner; s.invite = r.invite;
       s.mine = toCodes(r.mine, r.mineW); s.theirs = toCodes(r.theirs, r.theirsW);
       if (r.presets) s.presets = r.presets;
+      s.plans = r.plans || [];
       if (!s.loaded) { s.loaded = true; }
       else if (!prevPartner && r.partner) toast(r.partner.name + 'さんが参加しました');
       var st = loadStore();
       if (st.cals[s.id] && st.cals[s.id].myName !== r.me.name) { st.cals[s.id].myName = r.me.name; saveStore(st); }
       renderCalendar();
+      if (C.day && !C.day.form) renderDay();
       next();
     }, function (e) {
       if (C !== s) return;
@@ -334,14 +337,15 @@
       var w = JP.dow(date);
       var cls = (date === today ? ' today' : '');
       var head = '<span class="num">' + d + '</span>' + (hol ? '<span class="hol" title="' + esc(hol) + '">祝</span>' : '');
-      if (JP.dayType(date) === 'weekday') {
-        cells += '<button type="button" class="cell day' + cls + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="all"' + (past ? ' disabled' : '') + '>' + head + '<span class="mk"></span><span class="wl"></span></button>';
-      } else {
-        cells += '<div class="cell off' + cls + '" data-off="' + date + '"><div class="head">' + head + '</div>' +
-          ['noon', 'night'].map(function (p) {
-            return '<button type="button" class="pill' + (past ? ' is-past' : '') + '" data-date="' + date + '" data-period="' + p + '"' + (past ? ' disabled' : '') + '><span class="pl"><b>' + PERIOD_LABEL[p] + '</b><span class="mk"></span></span><span class="wl"></span></button>';
-          }).join('') + '</div>';
-      }
+      // 1日のセル: 上段＝あなた（タップで変更）／下段＝相手（見るだけ）。土日祝は 昼・夜 の2段ずつ
+      var periods = JP.periodsOf(date), meRows = '', ptRows = '';
+      periods.forEach(function (p) {
+        var pn = p === 'all' ? '' : '<b class="pn">' + PERIOD_LABEL[p] + '</b>';
+        meRows += '<button type="button" class="sr" data-who="me" data-date="' + date + '" data-period="' + p + '">' + pn + '<span class="mk"></span><span class="wl"></span></button>';
+        ptRows += '<div class="sr" data-who="pt" data-pp="' + p + '">' + pn + '<span class="mk"></span><span class="wl"></span></div>';
+      });
+      cells += '<div class="cell ' + (periods.length === 1 ? 'day' : 'off') + cls + (past ? ' is-past' : '') + '" data-cell="' + date + '"' + (past ? ' data-past="1"' : '') + '>' +
+        '<div class="head">' + head + '</div><div class="half me">' + meRows + '</div><div class="half pt">' + ptRows + '</div><span class="pm"></span></div>';
     }
     var dows = [1, 2, 3, 4, 5, 6, 0].map(function (w) {
       return '<button type="button" class="dow' + (w === 6 ? ' sat' : w === 0 ? ' sun' : '') + '" data-action="dow" data-dow="' + w + '" aria-label="' + DOW_LABELS[w] + '曜日をまとめて選択">' + DOW_LABELS[w] + '</button>';
@@ -359,21 +363,24 @@
         '<div class="person"><div class="av ' + (C.partner ? 'pt' : 'wait') + '">' + (C.partner ? esc(Array.from(C.partner.name)[0]) : '？') + '</div><span class="tag">相手</span><span class="nm">' + ptName + '</span></div>' +
       '</section>' +
       '<div id="banner"></div>' +
+      '<div id="nextplan"></div>' +
       '<nav class="month"><button type="button" class="nav-btn" data-action="prev" aria-label="前の月"' + (atMin ? ' disabled' : '') + '>' + ICON.left + '</button>' +
         '<button type="button" class="month-title" data-action="months">' + y + '年' + m + '月' + ICON.down + '</button>' +
         '<button type="button" class="nav-btn" data-action="next" aria-label="次の月"' + (atMax ? ' disabled' : '') + '>' + ICON.right + '</button></nav>' +
       '<div class="dows" id="dows">' + dows + '</div>' +
       '<div class="grid" id="grid">' + cells + '</div>' +
       '<section class="legend" aria-label="凡例">' +
-        '<span><i class="mk k-mine"></i>自分のみ</span>' +
-        '<span><i class="mk k-theirs"></i>相手のみ</span>' +
-        '<span><i class="gchip">✓</i>ふたりとも</span>' +
-        '<span><i class="mk k-cross"></i>時間がすれ違い</span>' +
-        '<span><i class="mk k-none"></i>未選択</span>' +
+        '<span><i class="sw me"></i>上段：あなた</span>' +
+        '<span><i class="sw pt"></i>下段：' + (C.partner ? esc(C.partner.name) : '相手') + '</span>' +
+        '<span><i class="sw ok"></i>ふたりとも空き（時間が重なる）</span>' +
+        '<span><i class="sw cross"></i>時間がすれ違い</span>' +
+        '<span><i class="sw none"></i>未選択</span>' +
+        '<span><i class="sw plan"></i>確定した予定</span>' +
         '<span><i class="today-chip">' + Number(today.slice(8)) + '</i>今日</span>' +
       '</section>' +
-      '<p class="note">変更するときは、下の「編集する」を押してから日付をタップ。タップするたびに「終日 → 〜9 → 〜18 → 21〜 → 解除」と切り替わります（時刻は設定で変更）。土日・祝日は「昼」「夜」を選べます。</p>' +
-      '<p class="note small">曜日（月・火…）をタップでその月をまとめて選択。横になぞっても連続で選べます。<br>未選択は「空きの登録なし」で、予定があるという意味ではありません。</p>' +
+      '<p class="note">各日の<b>上段があなたの欄</b>、下段は相手の欄（見るだけ）です。空きを変えるときは、下の「編集する」を押してから上段をタップ。タップするたびに「終日 → 〜9 → 〜18 → 21〜 → 解除」と切り替わります（時刻は設定で変更）。</p>' +
+      '<p class="note small">日付をタップすると、その日の2人の空きと予定を見られます（編集中以外）。曜日（月・火…）をタップでその月をまとめて、横になぞって連続で選べます。<br>未選択は「空きの登録なし」で、予定があるという意味ではありません。</p>' +
+      '<section class="card"><h2>確定した予定</h2><div id="plans"></div></section>' +
       '<section class="card"><h2>ふたりが空いている日</h2><div id="matches"></div></section>' +
       '<div id="invite-area"></div>' +
       '<div class="editbar"><button type="button" id="editbtn" data-action="edit"></button></div>';
@@ -383,32 +390,51 @@
   /* 状態に応じて変わる部分だけを更新する（ドラッグ中でも要素を作り直さない） */
   function paint() {
     if (!C || !C.loaded || !document.getElementById('grid')) return;
-    var els = document.querySelectorAll('#grid [data-period]');
-    var i, el, k, st, u, info, wl;
-    for (i = 0; i < els.length; i++) {
-      el = els[i];
-      k = keyOf(el.getAttribute('data-date'), el.getAttribute('data-period'));
-      info = slotInfo(k);
-      st = info.st;
-      u = unsavedState(k);
-      wl = el.querySelector('.wl');
-      if (wl.textContent !== info.text) wl.textContent = info.text;
-      if (el.getAttribute('data-st') !== st) el.setAttribute('data-st', st);
-      if ((el.getAttribute('data-unsaved') || '') !== u) { if (u) el.setAttribute('data-unsaved', u); else el.removeAttribute('data-unsaved'); }
-      el.setAttribute('aria-pressed', isMine(k) ? 'true' : 'false');
-      el.setAttribute('aria-label', labelFor(el.getAttribute('data-date'), el.getAttribute('data-period'), info, u));
-    }
-    var offs = document.querySelectorAll('#grid [data-off]');
-    for (i = 0; i < offs.length; i++) {
-      var date = offs[i].getAttribute('data-off');
-      var both = ['noon', 'night'].filter(function (p) { return stateOf(keyOf(date, p)) === 'both'; }).length;
-      var v = both === 2 ? 'all' : both === 1 ? 'some' : 'none';
-      if (offs[i].getAttribute('data-match') !== v) offs[i].setAttribute('data-match', v);
+    var cells = document.querySelectorAll('#grid [data-cell]');
+    var byDate = plansByDate();
+    var ptName = C.partner ? C.partner.name : '相手';
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i], date = cell.getAttribute('data-cell'), periods = JP.periodsOf(date), matched = 0;
+      for (var j = 0; j < periods.length; j++) {
+        var p = periods[j], k = keyOf(date, p), info = slotInfo(k), u = unsavedState(k);
+        var x = info.st === 'both' ? 'match' : info.st === 'cross' ? 'cross' : '';
+        if (x === 'match') matched++;
+        var mine = myCode(k), theirs = C.theirs[k] || '';
+        var me = cell.querySelector('.sr[data-period="' + p + '"]'), pt = cell.querySelector('.sr[data-pp="' + p + '"]');
+        paintRow(me, mine, x, u, p);
+        me.setAttribute('aria-pressed', mine ? 'true' : 'false');
+        me.setAttribute('aria-label', labelFor(date, p, info, u));
+        paintRow(pt, theirs, x, '', p);
+        pt.setAttribute('aria-label', ptName + ': ' + (theirs ? codeText(theirs) : '未選択'));
+      }
+      setAttr(cell, 'data-match', matched === periods.length ? 'all' : matched ? 'some' : 'none');
+      // 確定した予定: セルにオレンジの枠と短いタイトルを出す
+      var list = byDate[date] || [], pm = cell.querySelector('.pm');
+      var pmText = list.length ? list[0].title + (list.length > 1 ? ' ほか' + (list.length - 1) : '') : '';
+      if (pm.textContent !== pmText) pm.textContent = pmText;
+      if (cell.classList.contains('has-plan') !== !!list.length) cell.classList.toggle('has-plan', !!list.length);
     }
     paintSync();
     paintMatches();
+    paintPlans();
+    paintNextPlan();
     paintInvite();
     paintEdit();
+  }
+
+  function setAttr(el, name, v) {
+    if (v === '' || v == null) { if (el.hasAttribute(name)) el.removeAttribute(name); }
+    else if (el.getAttribute(name) !== v) el.setAttribute(name, v);
+  }
+  // 1段（あなた or 相手）の表示。set=その人が空きを登録している / x=match(時間が重なる)・cross(すれ違い)
+  function paintRow(el, code, x, u, p) {
+    var text = code && p !== 'noon' ? JP.rangeShort(JP.codeRange(code)) : ''; // 昼には範囲が無いので文字は出さない
+    var wl = el.querySelector('.wl');
+    if (wl.textContent !== text) wl.textContent = text;
+    setAttr(el, 'data-st', code ? 'set' : 'none');
+    setAttr(el, 'data-x', code ? x : '');
+    setAttr(el, 'data-hasl', text ? '1' : '');
+    setAttr(el, 'data-unsaved', u);
   }
 
   function paintEdit() {
@@ -476,10 +502,146 @@
         var t = C.month.m + '/' + x.d + '(' + DOW_LABELS[JP.dow(x.date)] + ')';
         if (x.periods[0] === 'all') { if (x.longs[0]) t += ' ' + x.longs[0]; }
         else t += ' ' + x.periods.map(function (p, i) { return PERIOD_LABEL[p] + (x.longs[i] ? '(' + x.longs[i] + ')' : ''); }).join('・');
-        return '<span class="chip">' + t + '</span>';
-      }).join('') + '</div>' : '<p class="empty-msg">この月はまだ、ふたりが重なる日がありません。</p>';
+        return '<button type="button" class="chip" data-action="openday" data-form="1" data-date="' + x.date + '">' + t + '</button>';
+      }).join('') + '</div><p class="hint-s">日付をタップすると、そのまま予定を確定できます。</p>' : '<p class="empty-msg">この月はまだ、ふたりが重なる日がありません。</p>';
     }
     if (el.getAttribute('data-k') !== html) { el.innerHTML = html; el.setAttribute('data-k', html); }
+  }
+
+  /* ---------- 確定した予定（「この日に飲みに行く」など） ---------- */
+  var planMapCache = { plans: null, map: null };
+  function plansByDate() {
+    if (planMapCache.plans === C.plans) return planMapCache.map;
+    var m = {};
+    C.plans.forEach(function (p) { (m[p.date] = m[p.date] || []).push(p); });
+    planMapCache = { plans: C.plans, map: m };
+    return m;
+  }
+  function dateLabel(date) { var p = JP.parse(date); return p.m + '/' + p.d + '(' + DOW_LABELS[JP.dow(date)] + ')'; }
+  function daysUntil(date) {
+    var a = JP.parse(JP.today()), b = JP.parse(date);
+    return Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / 86400000);
+  }
+  function untilText(date) {
+    var d = daysUntil(date);
+    return d === 0 ? '今日' : d === 1 ? '明日' : d > 0 ? 'あと' + d + '日' : (-d) + '日前';
+  }
+  function planRowHtml(p) {
+    var y = JP.parse(p.date).y, thisY = Number(JP.today().slice(0, 4));
+    return '<button type="button" class="plan-row" data-action="openday" data-date="' + p.date + '">' +
+      '<span class="d">' + dateLabel(p.date) + '<small>' + (y !== thisY ? y + '年 ' : '') + untilText(p.date) + '</small></span>' +
+      '<span><span class="t">' + esc(p.title) + '</span>' + (p.memo ? '<span class="m" style="display:block">' + esc(p.memo) + '</span>' : '') + '</span></button>';
+  }
+  function paintPlans() {
+    var el = document.getElementById('plans');
+    if (!el) return;
+    var today = JP.today();
+    var up = C.plans.filter(function (p) { return p.date >= today; });
+    var past = C.plans.filter(function (p) { return p.date < today; }).reverse().slice(0, 30);
+    var open = !!el.querySelector('details.past[open]');
+    var html = up.length ? '<div class="planlist">' + up.map(planRowHtml).join('') + '</div>'
+      : '<p class="empty-msg">まだありません。ふたりで日を決めたら、その日をタップして「予定を確定」しておくと、あとで見返せます。</p>';
+    if (past.length) html += '<details class="past"' + (open ? ' open' : '') + '><summary>過ぎた予定（' + past.length + '件）</summary><div class="planlist">' + past.map(planRowHtml).join('') + '</div></details>';
+    if (el.getAttribute('data-k') !== html) { el.innerHTML = html; el.setAttribute('data-k', html); }
+  }
+  function paintNextPlan() {
+    var el = document.getElementById('nextplan');
+    if (!el) return;
+    var today = JP.today(), n = null;
+    for (var i = 0; i < C.plans.length; i++) if (C.plans[i].date >= today) { n = C.plans[i]; break; }
+    var html = n ? '<button type="button" class="nextplan" data-action="openday" data-date="' + n.date + '"><span class="tg">次の予定</span><span class="tx">' +
+      dateLabel(n.date) + ' ' + esc(n.title) + '</span><span class="dd">' + untilText(n.date) + '</span></button>' : '';
+    if (el.getAttribute('data-k') !== html) { el.innerHTML = html; el.setAttribute('data-k', html); }
+  }
+
+  // 日付をタップしたときのシート: その日の2人の空き・確定した予定・予定の追加/編集/削除
+  var QUICK_TITLES = ['飲み', 'ごはん', 'ランチ', '映画', '旅行', '買い物'];
+  function openDay(date, startForm) {
+    openSheet('<div id="day-body"></div>', function (root) { root.addEventListener('click', onDayClick); });
+    C.day = { date: date, form: null };
+    if (startForm && !(plansByDate()[date] || []).length) C.day.form = { id: null };
+    renderDay();
+  }
+  function availTag(code, who, per) {
+    if (!code) return '<span class="tag2 none">未選択</span>';
+    var t = per === 'noon' || code === 'F' ? (per === 'noon' ? '空き' : '終日') : JP.rangeLong(JP.codeRange(code));
+    return '<span class="tag2 ' + who + '">' + t + '</span>';
+  }
+  function renderDay() {
+    var body = document.getElementById('day-body');
+    if (!body || !C || !C.day) return;
+    var date = C.day.date, p = JP.parse(date), hol = JP.holidayName(date), list = plansByDate()[date] || [];
+    var ptName = C.partner ? esc(C.partner.name) : '相手';
+    var h = '<h2>' + p.m + '月' + p.d + '日(' + DOW_LABELS[JP.dow(date)] + ')' + (hol ? '<span class="hol-tag">' + esc(hol) + '</span>' : '') + '</h2>';
+    h += '<table class="avail"><tr><th></th><th>あなた</th><th>' + ptName + '</th><th>重なり</th></tr>';
+    JP.periodsOf(date).forEach(function (per) {
+      var k = keyOf(date, per), info = slotInfo(k);
+      var ov = info.st === 'both' ? '<span class="tag2 ok">一致' + (per === 'noon' ? '' : ' ' + (info.long || '終日')) + '</span>'
+        : info.st === 'cross' ? '<span class="tag2 cross">すれ違い</span>' : '<span class="tag2 none">—</span>';
+      h += '<tr><td><b>' + (per === 'all' ? 'この日' : PERIOD_LABEL[per]) + '</b></td><td>' + availTag(myCode(k), 'me', per) + '</td><td>' + availTag(C.theirs[k] || '', 'pt', per) + '</td><td>' + ov + '</td></tr>';
+    });
+    h += '</table><h3>確定した予定</h3>';
+    var f = C.day.form;
+    if (!list.length && !f) h += '<p class="hint-s" style="margin-top:2px">この日の予定はまだありません。</p>';
+    list.forEach(function (pl) {
+      if (f && f.id === pl.id) return; // 編集中の予定は下のフォームに出す
+      h += '<div class="plan-item"><div class="t">' + esc(pl.title) + '</div>' + (pl.memo ? '<div class="m">' + esc(pl.memo) + '</div>' : '') +
+        '<div class="acts"><button type="button" data-act="edit" data-id="' + pl.id + '">編集</button><button type="button" class="del" data-act="del" data-id="' + pl.id + '">削除</button></div></div>';
+    });
+    if (f) {
+      var ed = f.id ? list.filter(function (x) { return x.id === f.id; })[0] : null;
+      h += '<div class="field"><label for="pl-title">' + (ed ? '予定を編集' : 'この日の予定') + '（タイトル）</label><input id="pl-title" maxlength="30" placeholder="例: 飲みに行く" value="' + esc(ed ? ed.title : '') + '"></div>' +
+        '<div class="quick">' + QUICK_TITLES.map(function (q) { return '<button type="button" data-act="quick" data-q="' + q + '">' + q + '</button>'; }).join('') + '</div>' +
+        '<div class="field"><label for="pl-memo">メモ（時間・場所など）</label><textarea id="pl-memo" maxlength="200" placeholder="例: 19時 渋谷駅集合">' + esc(ed ? ed.memo : '') + '</textarea></div>' +
+        '<p class="err-text" id="pl-err" role="alert"></p>' +
+        '<div class="btnrow"><button type="button" class="btn half" data-act="cancel">キャンセル</button><button type="button" class="btn half plan" data-act="save">' + (ed ? '更新する' : '確定する') + '</button></div>';
+    } else {
+      h += '<button type="button" class="btn plan" data-act="new">＋ この日の予定を確定する</button>';
+    }
+    body.innerHTML = h;
+    if (f && !f.id) { var t = document.getElementById('pl-title'); if (t) try { t.focus(); } catch (x) { /* noop */ } }
+  }
+  function onDayClick(e) {
+    var b = e.target.closest ? e.target.closest('[data-act]') : null;
+    if (!b || !C || !C.day) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'new') { C.day.form = { id: null }; renderDay(); }
+    else if (act === 'edit') { C.day.form = { id: b.getAttribute('data-id') }; renderDay(); }
+    else if (act === 'cancel') { C.day.form = null; renderDay(); }
+    else if (act === 'quick') { var inp = document.getElementById('pl-title'); if (inp) inp.value = b.getAttribute('data-q'); }
+    else if (act === 'save') savePlan(b);
+    else if (act === 'del') deletePlan(b.getAttribute('data-id'));
+  }
+  function planError(e, el) {
+    if (e.status === 403) { forgetCal(C.id); return showForbidden(); }
+    if (e.status === 404) { pollSoon(0); C.rev = null; }
+    if (el) el.textContent = e.status === 409 ? '1日に登録できる予定は5件までです' : e.status === 404 ? 'この予定はすでに削除されています' :
+      e.status === 400 ? '入力内容を確認してください（タイトル30文字・メモ200文字まで）' : '保存できませんでした。通信を確認してもう一度お試しください';
+  }
+  function applyPlans(plans) { C.plans = plans; C.epoch++; paint(); } // 取得中だった古い一覧で上書きされないよう epoch を進める
+  function savePlan(btn) {
+    var s = C, f = s.day.form;
+    var title = document.getElementById('pl-title').value.trim(), memo = document.getElementById('pl-memo').value, err = document.getElementById('pl-err');
+    if (!title || Array.from(title).length > 30) { err.textContent = 'タイトルを1〜30文字で入力してください'; return; }
+    if (Array.from(memo).length > 200) { err.textContent = 'メモは200文字までです'; return; }
+    btn.disabled = true; err.textContent = '';
+    var plan = { date: s.day.date, title: title, memo: memo };
+    if (f.id) plan.id = f.id;
+    api('plan', { id: s.id, op: 'save', plan: plan }, s.token).then(function (r) {
+      if (C !== s) return;
+      applyPlans(r.plans);
+      if (s.day) s.day.form = null;
+      renderDay();
+      toast(f.id ? '予定を更新しました' : '予定を確定しました');
+    }, function (e) { if (C !== s) return; btn.disabled = false; planError(e, err); });
+  }
+  function deletePlan(id) {
+    if (!window.confirm('この予定を削除します。よろしいですか？')) return;
+    var s = C;
+    api('plan', { id: s.id, op: 'delete', planId: id }, s.token).then(function (r) {
+      if (C !== s) return;
+      applyPlans(r.plans); renderDay(); toast('予定を削除しました');
+    }, function (e) { if (C !== s) return; planError(e, null); toast('削除できませんでした。通信を確認してもう一度お試しください'); });
   }
 
   function inviteUrl() { return location.origin + '/?join=' + C.id + '.' + C.invite; }
@@ -495,12 +657,13 @@
   /* ---------- 操作: タップ / なぞり / 曜日まとめ ---------- */
   var drag = null;
 
+  function isPastDate(d) { return d < JP.today(); }
   function targetOf(node) { return node && node.closest ? node.closest('[data-period]') : null; }
 
   $app.addEventListener('pointerdown', function (e) {
     if (!C || !C.editing || e.button > 0) return; // 編集モードのときだけ、タップ・なぞり選択を受け付ける
     var el = targetOf(e.target);
-    if (!el || el.disabled) return;
+    if (!el || isPastDate(el.getAttribute('data-date'))) return;
     if (e.target.releasePointerCapture && e.pointerId != null) { try { e.target.releasePointerCapture(e.pointerId); } catch (x) { /* noop */ } }
     var period = el.getAttribute('data-period');
     var key = keyOf(el.getAttribute('data-date'), period);
@@ -534,7 +697,7 @@
   document.addEventListener('pointercancel', function () { endDrag(false); });
 
   function applyDrag(el) {
-    if (el.disabled) return;
+    if (isPastDate(el.getAttribute('data-date'))) return;
     var date = el.getAttribute('data-date'), period = el.getAttribute('data-period');
     var map = {};
     if (drag.period === 'all') {
@@ -549,11 +712,19 @@
 
   $app.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button') : null;
-    if (!b) return;
+    if (!b) { // ボタン以外（日付の数字・相手の段・余白）
+      var cell = e.target.closest ? e.target.closest('[data-cell]') : null;
+      if (!cell || !C) return;
+      if (!C.editing) return openDay(cell.getAttribute('data-cell'));
+      if (e.target.closest('.sr[data-who="pt"]')) toast('下段は相手の欄です（変更できません）。上段があなたの欄です');
+      return;
+    }
     // キーボード操作(detail=0)の昼/夜/日付ボタン。マウス・タッチは pointer 側で処理済み
     if (b.hasAttribute('data-period')) {
-      if (!C || b.disabled) return;
-      if (!C.editing) return editHint(); // 閲覧中のタップは何も変えない（スクロール中の誤タップ対策）
+      if (!C) return;
+      var bdate = b.getAttribute('data-date');
+      if (!C.editing) return openDay(bdate); // 閲覧中のタップは何も変えず、その日の空き・予定を見るシートを開く（誤タップ対策）
+      if (isPastDate(bdate)) return;        // 過去日の空きは変更できない
       if (e.detail === 0) {
         var k = keyOf(b.getAttribute('data-date'), b.getAttribute('data-period'));
         var m = {}; m[k] = nextCode(b.getAttribute('data-period'), myCode(k));
@@ -581,6 +752,7 @@
     if (a === 'discard') return discardUnsaved();
     if (a === 'copyInvite') return copyText(inviteUrl(), '招待リンクをコピーしました');
     if (a === 'line') return openLine();
+    if (a === 'openday') return C && openDay(b.getAttribute('data-date'), b.getAttribute('data-form') === '1');
     if (a === 'dow') return C && (C.editing ? bulkDow(Number(b.getAttribute('data-dow'))) : editHint());
     if (a === 'edit') return C && toggleEdit();
     if (a === 'new') return showCreate();
@@ -649,7 +821,7 @@
     $sheetRoot.appendChild(bg);
     if (onMount) onMount(bg);
   }
-  function closeSheet() { $sheetRoot.innerHTML = ''; }
+  function closeSheet() { $sheetRoot.innerHTML = ''; if (C) C.day = null; }
 
   function openMonths() {
     var today = JP.today(), cur = C.month, base = monthOf(today), html = '<h2>月を選ぶ</h2><div class="months">';
